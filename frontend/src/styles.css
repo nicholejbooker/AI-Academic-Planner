@@ -1,0 +1,318 @@
+:root {
+  font-family: Inter, system-ui, Arial, sans-serif;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.card {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 16px;
+  margin-top: 16px;
+}
+
+input {
+  width: 100%;
+  margin-top: 8px;
+  margin-bottom: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+select {
+  width: 100%;
+  margin-top: 8px;
+  margin-bottom: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+}
+
+.autocomplete {
+  position: relative;
+}
+
+.suggestions {
+  position: absolute;
+  top: calc(100% - 10px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  max-height: 220px;
+  overflow-y: auto;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+}
+
+.suggestionItem {
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-bottom: 1px solid #f1f5f9;
+  border-radius: 0;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 8px 10px;
+}
+
+.suggestionItem:hover {
+  background: #eff6ff;
+}
+
+.noSuggestion {
+  padding: 10px;
+  color: #64748b;
+  font-size: 0.95rem;
+}
+
+button {
+  border: none;
+  border-radius: 8px;
+  background: #2563eb;
+  color: white;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.secondaryBtn {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.buttonRow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.success {
+  color: #15803d;
+  margin-top: 10px;
+}
+
+.calendarGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.calendarCard {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fafc;
+}
+
+.error {
+  color: #dc2626;
+}
+
+.muted {
+  color: #475569;
+}
+
+.offeringList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.offeringBtn {
+  text-align: left;
+  background: #eef2ff;
+  color: #1e293b;
+  border: 1px solid #c7d2fe;
+}
+
+.assignmentList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.assignmentRow {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.dateActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.dateActions input {
+  margin: 0;
+  max-width: 180px;
+}
+
+.calendarComposer {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.calendarComposer input,
+.calendarComposer select {
+  margin: 0;
+}
+
+.calendarEventList {
+  list-style: none;
+  margin: 12px 0 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.calendarEventRow {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.eventMeta {
+  margin-bottom: 8px;
+}
+
+.eventInputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 8px;
+}
+
+.eventInputs input {
+  margin: 0;
+}
+
+.weekNav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.weekGrid {
+  display: grid;
+  grid-template-columns: 72px repeat(7, minmax(160px, 1fr));
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.timeColumn {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 8px 4px;
+}
+
+.timeTick {
+  height: 36px;
+  font-size: 0.78rem;
+  color: #64748b;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding-right: 4px;
+}
+
+.dayColumn {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 8px;
+  min-height: 620px;
+}
+
+.dayHeader {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.dayCanvas {
+  position: relative;
+  height: 576px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.hourSlot {
+  height: 36px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.eventCard {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  border: 1px solid #93c5fd;
+  border-radius: 6px;
+  background: #dbeafe;
+  padding: 8px;
+  overflow: hidden;
+  cursor: grab;
+}
+
+.eventCard:active {
+  cursor: grabbing;
+}
+
+.inlineEventEdit {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.inlineEventEdit input {
+  margin: 0;
+  padding: 6px 8px;
+}
+
+.agendaList {
+  list-style: none;
+  margin: 10px 0 0 0;
+  padding: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #fff;
+}
+
+.agendaRow {
+  padding: 8px 10px;
+  border-bottom: 1px solid #f1f5f9;
+}
