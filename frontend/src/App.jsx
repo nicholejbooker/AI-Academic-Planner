@@ -58,6 +58,8 @@ export default function App() {
   const [calendarData, setCalendarData] = useState(null);
   const [dueDateEdits, setDueDateEdits] = useState({});
   const [eventEdits, setEventEdits] = useState({});
+  const [syllabusText, setSyllabusText] = useState("");
+  const [syllabusSourceUrl, setSyllabusSourceUrl] = useState("");
   const [newBlock, setNewBlock] = useState({
     title: "",
     date: "",
@@ -72,6 +74,7 @@ export default function App() {
   const [optionsLoading, setOptionsLoading] = useState(true);
   const [weekOffset, setWeekOffset] = useState(0);
   const [draggingEventId, setDraggingEventId] = useState("");
+  const [selectedEventId, setSelectedEventId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -189,6 +192,8 @@ export default function App() {
     return map;
   }, [calendarData]);
 
+  const selectedEvent = selectedEventId ? allEventsById[selectedEventId] : null;
+
   const agendaEvents = useMemo(() => {
     return [...(calendarData?.events || [])].sort((a, b) => {
       const left = `${a.date} ${a.startTime}`;
@@ -232,6 +237,43 @@ export default function App() {
       setCalendarData(null);
       setDueDateEdits({});
       setEventEdits({});
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function parsePastedSyllabus() {
+    if (!syllabusText.trim() && !syllabusSourceUrl.trim()) {
+      setError("Paste syllabus text or provide a syllabus URL.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const parsed = await postJson("/integrations/syllabus/parse", {
+        courseCode: selectedOffering?.courseCode || courseCode.trim(),
+        semester: selectedOffering?.semester || semester.trim(),
+        professor: selectedOffering?.professor || professor.trim(),
+        syllabusText,
+        syllabusUrl: syllabusSourceUrl
+      });
+      const offering = {
+        courseCode: parsed.courseCode,
+        semester: parsed.semester,
+        professor: parsed.professor,
+        section: selectedOffering?.section || "A01",
+        source: "manual-syllabus"
+      };
+      setSelectedOffering(offering);
+      setSchedule(parsed);
+      const draft = {};
+      parsed.assignments.forEach((item) => {
+        draft[item.title] = item.dueDate;
+      });
+      setDueDateEdits(draft);
+      await loadCalendar(offering);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -451,6 +493,7 @@ export default function App() {
         };
       });
       setEventEdits(edits);
+      setSelectedEventId("");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -598,6 +641,28 @@ export default function App() {
             Link to Calendar
           </button>
         </div>
+        <div className="manualSyllabusBox">
+          <h3>Manual Syllabus Paste (No Admin Access)</h3>
+          <p className="muted">
+            Paste syllabus schedule lines with dates (for example: "Quiz 1 - 06/10/2026"). Parsed assignments will
+            replace tentative items for the selected offering.
+          </p>
+          <input
+            value={syllabusSourceUrl}
+            onChange={(e) => setSyllabusSourceUrl(e.target.value)}
+            placeholder="Optional syllabus URL for reference"
+          />
+          <textarea
+            value={syllabusText}
+            onChange={(e) => setSyllabusText(e.target.value)}
+            placeholder={
+              "Example:\nAssignment 1 due 06/03/2026\nQuiz 1 - 06/10/2026\nProject draft due 07/08/2026\nFinal Exam 07/30/2026"
+            }
+          />
+          <button onClick={parsePastedSyllabus} disabled={loading || (!syllabusText.trim() && !syllabusSourceUrl.trim())}>
+            Parse Pasted Syllabus
+          </button>
+        </div>
         {calendarLink && (
           <p className="success">
             Linked {calendarLink.eventCount} {calendarLink.courseCode} deadlines to calendar.
@@ -628,14 +693,18 @@ export default function App() {
           {imports.offerings.length === 0 && <p className="muted">No offerings matched your filters.</p>}
           <div className="offeringList">
             {imports.offerings.map((item) => (
-              <button
-                key={`${item.courseCode}-${item.semester}-${item.professor}-${item.section}`}
-                className="offeringBtn"
-                onClick={() => loadOfferingSchedule(item)}
-                disabled={loading}
-              >
-                <strong>{item.courseCode}</strong> - {item.semester} - Prof. {item.professor} (Sec {item.section})
-              </button>
+              <div key={`${item.courseCode}-${item.semester}-${item.professor}-${item.section}`}>
+                <button className="offeringBtn" onClick={() => loadOfferingSchedule(item)} disabled={loading}>
+                  <strong>{item.courseCode}</strong> - {item.semester} - Prof. {item.professor} (Sec {item.section})
+                </button>
+                {item.syllabusUrl && (
+                  <p className="muted">
+                    <a href={item.syllabusUrl} target="_blank" rel="noreferrer">
+                      Search this offering in MGA Simple Syllabus
+                    </a>
+                  </p>
+                )}
+              </div>
             ))}
           </div>
         </section>
@@ -777,6 +846,7 @@ export default function App() {
                             key={event.id}
                             className="eventCard"
                             draggable
+                            onClick={() => setSelectedEventId(event.id)}
                             onDragStart={(e) => {
                               e.dataTransfer.setData("text/plain", event.id);
                               setDraggingEventId(event.id);
@@ -832,6 +902,61 @@ export default function App() {
                   </div>
                 ))}
               </div>
+              {selectedEvent && (
+                <section className="selectedEventPanel">
+                  <h3>Selected Event</h3>
+                  <p>
+                    <strong>{selectedEvent.title}</strong>
+                  </p>
+                  <p className="muted">
+                    {selectedEvent.eventType} via {selectedEvent.source}
+                  </p>
+                  <div className="eventInputs">
+                    <input
+                      type="date"
+                      value={eventEdits[selectedEvent.id]?.date || selectedEvent.date}
+                      onChange={(e) =>
+                        setEventEdits((prev) => ({
+                          ...prev,
+                          [selectedEvent.id]: {
+                            ...(prev[selectedEvent.id] || {}),
+                            date: e.target.value
+                          }
+                        }))
+                      }
+                    />
+                    <input
+                      type="time"
+                      value={eventEdits[selectedEvent.id]?.startTime || selectedEvent.startTime}
+                      onChange={(e) =>
+                        setEventEdits((prev) => ({
+                          ...prev,
+                          [selectedEvent.id]: {
+                            ...(prev[selectedEvent.id] || {}),
+                            startTime: e.target.value
+                          }
+                        }))
+                      }
+                    />
+                    <input
+                      type="time"
+                      value={eventEdits[selectedEvent.id]?.endTime || selectedEvent.endTime}
+                      onChange={(e) =>
+                        setEventEdits((prev) => ({
+                          ...prev,
+                          [selectedEvent.id]: {
+                            ...(prev[selectedEvent.id] || {}),
+                            endTime: e.target.value
+                          }
+                        }))
+                      }
+                    />
+                    <button onClick={() => saveCalendarEvent(selectedEvent)} disabled={loading}>
+                      Save Selected Event
+                    </button>
+                  </div>
+                </section>
+              )}
               <h3>All Calendar Events</h3>
               <ul className="agendaList">
                 {agendaEvents.map((event) => (

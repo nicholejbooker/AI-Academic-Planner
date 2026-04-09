@@ -99,6 +99,16 @@ public class IntegrationsController {
                 request.endTime());
     }
 
+    @PostMapping("/syllabus/parse")
+    public Map<String, Object> parseSyllabusText(@RequestBody @Valid ParseSyllabusRequest request) {
+        return integrationService.parseAndApplySyllabusText(
+                request.courseCode(),
+                request.semester(),
+                request.professor(),
+                request.syllabusText(),
+                request.syllabusUrl());
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     @ResponseStatus(HttpStatus.FORBIDDEN)
     public Map<String, String> handleIntegrationError(IllegalArgumentException ex) {
@@ -133,5 +143,13 @@ public class IntegrationsController {
             @NotBlank String date,
             @NotBlank String startTime,
             @NotBlank String endTime) {
+    }
+
+    public record ParseSyllabusRequest(
+            String courseCode,
+            String semester,
+            String professor,
+            String syllabusText,
+            String syllabusUrl) {
     }
 }

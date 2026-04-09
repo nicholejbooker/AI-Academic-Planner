@@ -12,6 +12,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -30,8 +32,13 @@ import org.springframework.stereotype.Service;
 public class IntegrationService {
 
     private static final String SIMPLE_SYLLABUS_BASE = "https://mga.simplesyllabus.com";
+    private static final String SYLLABUS_LIBRARY_URL = SIMPLE_SYLLABUS_BASE + "/en-US/syllabus-library";
     private static final Duration OPTIONS_CACHE_TTL = Duration.ofMinutes(30);
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final Pattern MDY_DATE_PATTERN = Pattern.compile("\\b(\\d{1,2})[/-](\\d{1,2})(?:[/-](\\d{2,4}))?\\b");
+    private static final Pattern ISO_DATE_PATTERN = Pattern.compile("\\b(\\d{4})-(\\d{2})-(\\d{2})\\b");
+    private static final Pattern COUNTED_ITEM_PATTERN = Pattern.compile(
+            "(?i)\\b(\\d{1,2})\\s+(?:regular\\s+)?(quizzes|quiz|assignments|assignment|projects|project|labs|lab|tests|test|papers|paper|exams|exam)\\b");
     private final Map<String, List<Map<String, Object>>> assignmentStore = new ConcurrentHashMap<>();
     private final Map<String, List<Map<String, Object>>> calendarStore = new ConcurrentHashMap<>();
     private final Map<String, List<Map<String, String>>> courseCatalog = seedCatalog();
@@ -70,7 +77,7 @@ public class IntegrationService {
         String offeringKey = offeringKey(normalizedCourseCode, semester, professor);
         List<Map<String, Object>> assignments = assignmentStore.computeIfAbsent(
                 offeringKey,
-                k -> defaultAssignments(normalizedCourseCode));
+                k -> defaultAssignments(normalizedCourseCode, semester));
 
         return Map.of(
                 "courseCode", normalizedCourseCode,
@@ -92,7 +99,7 @@ public class IntegrationService {
         String offeringKey = offeringKey(normalizedCourseCode, semester, professor);
         List<Map<String, Object>> assignments = assignmentStore.computeIfAbsent(
                 offeringKey,
-                k -> defaultAssignments(normalizedCourseCode));
+                k -> defaultAssignments(normalizedCourseCode, semester));
         boolean found = false;
         for (int i = 0; i < assignments.size(); i++) {
             Map<String, Object> row = assignments.get(i);
@@ -276,6 +283,385 @@ public class IntegrationService {
                 "professors", professors);
     }
 
+    public Map<String, Object> parseAndApplySyllabusText(
+            String courseCode,
+            String semester,
+            String professor,
+            String syllabusText,
+            String syllabusUrl) {
+        String effectiveText = syllabusText;
+        if ((effectiveText == null || effectiveText.isBlank()) && syllabusUrl != null && !syllabusUrl.isBlank()) {
+            effectiveText = fetchTextFromUrl(syllabusUrl);
+        }
+        String normalizedCourseCode = normalizeParsedCourseCode(courseCode, syllabusUrl, effectiveText);
+        String normalizedSemester = normalizeParsedSemester(semester, syllabusUrl, effectiveText);
+        String normalizedProfessor = normalizeParsedProfessor(professor, syllabusUrl, effectiveText);
+        String offeringKey = offeringKey(normalizedCourseCode, normalizedSemester, normalizedProfessor);
+
+        List<Map<String, Object>> parsed = parseAssignmentsFromText(
+                normalizedCourseCode,
+                normalizedSemester,
+                effectiveText,
+                syllabusUrl);
+        if (parsed.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "No assignments were detected. Paste schedule lines or provide a syllabus URL with visible assignment text.");
+        }
+
+        assignmentStore.put(offeringKey, parsed);
+        calendarStore.remove(offeringKey);
+
+        return Map.of(
+                "courseCode", normalizedCourseCode,
+                "semester", normalizedSemester,
+                "professor", normalizedProfessor,
+                "count", parsed.size(),
+                "assignments", parsed,
+                "source", "manual-syllabus-text");
+    }
+
+    private String normalizeParsedCourseCode(String provided, String syllabusUrl, String text) {
+        if (provided != null && !provided.isBlank()) {
+            return normalizedCourseCode(provided);
+        }
+        String inferred = inferCourseCode(syllabusUrl + " " + text);
+        return inferred == null ? normalizedCourseCode(null) : inferred;
+    }
+
+    private String normalizeParsedSemester(String provided, String syllabusUrl, String text) {
+        if (provided != null && !provided.isBlank()) {
+            return normalizedSemester(provided);
+        }
+        String inferred = inferSemester(syllabusUrl + " " + text);
+        return inferred == null ? normalizedSemester(null) : inferred;
+    }
+
+    private String normalizeParsedProfessor(String provided, String syllabusUrl, String text) {
+        if (provided != null && !provided.isBlank()) {
+            return normalizeProfessor(provided);
+        }
+        String inferred = inferProfessor(syllabusUrl + " " + text);
+        return inferred == null ? normalizeProfessor(null) : inferred;
+    }
+
+    private String inferCourseCode(String source) {
+        if (source == null || source.isBlank()) {
+            return null;
+        }
+        Matcher m = Pattern.compile("\\b([A-Za-z]{3,5})[-\\s](\\d{3,4}[A-Za-z0-9]{0,2})\\b").matcher(source);
+        if (m.find()) {
+            return (m.group(1) + " " + m.group(2)).toUpperCase(Locale.ROOT);
+        }
+        return null;
+    }
+
+    private String inferSemester(String source) {
+        if (source == null || source.isBlank()) {
+            return null;
+        }
+        String normalized = source.toLowerCase(Locale.ROOT);
+        String term = null;
+        if (normalized.contains("fall")) {
+            term = "Fall";
+        } else if (normalized.contains("summer")) {
+            term = "Summer";
+        } else if (normalized.contains("spring")) {
+            term = "Spring";
+        } else if (normalized.contains("winter")) {
+            term = "Winter";
+        }
+        if (term == null) {
+            return null;
+        }
+        Matcher yearMatcher = Pattern.compile("\\b(20\\d{2})\\b").matcher(source);
+        String year = yearMatcher.find() ? yearMatcher.group(1) : String.valueOf(LocalDate.now().getYear());
+        return term + " " + year;
+    }
+
+    private String inferProfessor(String source) {
+        if (source == null || source.isBlank()) {
+            return null;
+        }
+        Matcher m = Pattern.compile("(?i)\\b(?:professor|instructor|prof)\\s*[:\\-]?\\s*([A-Z][a-z]+(?:\\s+[A-Z][a-z]+){1,2})\\b")
+                .matcher(source);
+        if (m.find()) {
+            return m.group(1).trim();
+        }
+        return null;
+    }
+
+    private String fetchTextFromUrl(String rawUrl) {
+        try {
+            String url = rawUrl.trim();
+            if (!(url.startsWith("http://") || url.startsWith("https://"))) {
+                throw new IllegalArgumentException("Syllabus URL must start with http:// or https://");
+            }
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .GET()
+                    .header("User-Agent", "AI-Academic-Planner/1.0")
+                    .header("Accept", "text/html, text/plain")
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IllegalArgumentException("Could not fetch syllabus URL (status " + response.statusCode() + ").");
+            }
+            return htmlToText(response.body());
+        } catch (IllegalArgumentException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("Could not fetch syllabus URL. Paste syllabus text instead.");
+        }
+    }
+
+    private String htmlToText(String html) {
+        if (html == null || html.isBlank()) {
+            return "";
+        }
+        String text = html
+                .replaceAll("(?is)<script[^>]*>.*?</script>", " ")
+                .replaceAll("(?is)<style[^>]*>.*?</style>", " ")
+                .replaceAll("(?i)<br\\s*/?>", "\n")
+                .replaceAll("(?i)</p>", "\n")
+                .replaceAll("(?i)</div>", "\n")
+                .replaceAll("<[^>]+>", " ")
+                .replace("&nbsp;", " ")
+                .replace("&amp;", "&");
+        text = text.replaceAll("[ \\t]+", " ");
+        text = text.replaceAll("\\n{3,}", "\n\n");
+        return text.trim();
+    }
+
+    private List<Map<String, Object>> parseAssignmentsFromText(
+            String courseCode,
+            String semester,
+            String syllabusText,
+            String syllabusUrl) {
+        if (syllabusText == null || syllabusText.isBlank()) {
+            return List.of();
+        }
+        int year = extractYear(semester);
+        List<Map<String, Object>> assignments = new ArrayList<>();
+        String[] lines = syllabusText.split("\\R");
+        for (String rawLine : lines) {
+            String line = rawLine == null ? "" : rawLine.trim();
+            if (line.length() < 4) {
+                continue;
+            }
+            String date = extractDateFromLine(line, year);
+            if (date == null) {
+                continue;
+            }
+            if (!containsAssessmentKeyword(line)) {
+                continue;
+            }
+
+            String title = cleanParsedTitle(line, date, courseCode);
+            String type = inferAssignmentType(title);
+            Map<String, Object> row = buildAssignment(title, date, type, true);
+            if (syllabusUrl != null && !syllabusUrl.isBlank()) {
+                row.put("sourceUrl", syllabusUrl.trim());
+            }
+            assignments.add(row);
+        }
+
+        Map<String, Map<String, Object>> byTitleDate = new LinkedHashMap<>();
+        for (Map<String, Object> item : assignments) {
+            String key = item.get("title") + "|" + item.get("dueDate");
+            byTitleDate.putIfAbsent(key, item);
+        }
+        List<Map<String, Object>> unique = new ArrayList<>(byTitleDate.values());
+
+        // If syllabus lists assessments without dates (e.g., "5 regular quizzes"),
+        // generate tentative due dates across the term so users can edit later.
+        unique.addAll(parseUndatedAssessmentHints(courseCode, semester, syllabusText, syllabusUrl, unique));
+
+        Map<String, Map<String, Object>> deduped = new LinkedHashMap<>();
+        for (Map<String, Object> item : unique) {
+            String key = item.get("title") + "|" + item.get("dueDate");
+            deduped.putIfAbsent(key, item);
+        }
+        unique = new ArrayList<>(deduped.values());
+        unique.sort(Comparator.comparing(a -> String.valueOf(a.get("dueDate"))));
+        return unique;
+    }
+
+    private List<Map<String, Object>> parseUndatedAssessmentHints(
+            String courseCode,
+            String semester,
+            String syllabusText,
+            String syllabusUrl,
+            List<Map<String, Object>> existing) {
+        String[] lines = syllabusText.split("\\R");
+        List<String> generatedTitles = new ArrayList<>();
+        for (Map<String, Object> item : existing) {
+            generatedTitles.add(String.valueOf(item.get("title")).toLowerCase(Locale.ROOT));
+        }
+
+        List<String> requestedTitles = new ArrayList<>();
+        for (String rawLine : lines) {
+            String line = rawLine == null ? "" : rawLine.trim();
+            if (line.length() < 3 || !containsAssessmentKeyword(line) || extractDateFromLine(line, extractYear(semester)) != null) {
+                continue;
+            }
+            Matcher counted = COUNTED_ITEM_PATTERN.matcher(line);
+            if (counted.find()) {
+                int count = Math.min(12, Math.max(1, Integer.parseInt(counted.group(1))));
+                String kind = singularizeKind(counted.group(2));
+                for (int i = 1; i <= count; i++) {
+                    String title = "Tentative " + capitalize(kind) + " " + i;
+                    if (!generatedTitles.contains(title.toLowerCase(Locale.ROOT))) {
+                        requestedTitles.add(title);
+                        generatedTitles.add(title.toLowerCase(Locale.ROOT));
+                    }
+                }
+                continue;
+            }
+
+            String title = cleanParsedTitle(line, "", courseCode);
+            if (title.isBlank()) {
+                continue;
+            }
+            if (!title.toLowerCase(Locale.ROOT).startsWith("tentative ")) {
+                title = "Tentative " + title;
+            }
+            if (!generatedTitles.contains(title.toLowerCase(Locale.ROOT))) {
+                requestedTitles.add(title);
+                generatedTitles.add(title.toLowerCase(Locale.ROOT));
+            }
+        }
+
+        if (requestedTitles.isEmpty()) {
+            return List.of();
+        }
+
+        LocalDate start = semesterStartDate(semester);
+        int[] offsets = semesterOffsets(semester);
+        int spanDays = Math.max(offsets[offsets.length - 1], 56);
+        int step = Math.max(7, spanDays / Math.max(1, requestedTitles.size() + 1));
+
+        List<Map<String, Object>> generated = new ArrayList<>();
+        for (int i = 0; i < requestedTitles.size(); i++) {
+            LocalDate due = start.plusDays(7L + (long) step * i);
+            String title = requestedTitles.get(i);
+            Map<String, Object> row = buildAssignment(
+                    title,
+                    due.format(DATE_FORMATTER),
+                    inferAssignmentType(title),
+                    true);
+            if (syllabusUrl != null && !syllabusUrl.isBlank()) {
+                row.put("sourceUrl", syllabusUrl.trim());
+            }
+            generated.add(row);
+        }
+        return generated;
+    }
+
+    private String singularizeKind(String raw) {
+        String lower = raw.toLowerCase(Locale.ROOT);
+        if (lower.endsWith("ies")) {
+            return lower.substring(0, lower.length() - 3) + "y";
+        }
+        if (lower.endsWith("s")) {
+            return lower.substring(0, lower.length() - 1);
+        }
+        return lower;
+    }
+
+    private String capitalize(String value) {
+        if (value == null || value.isBlank()) {
+            return "Item";
+        }
+        return Character.toUpperCase(value.charAt(0)) + value.substring(1);
+    }
+
+    private boolean containsAssessmentKeyword(String line) {
+        String normalizedLine = line.toLowerCase(Locale.ROOT);
+        return normalizedLine.contains("quiz")
+                || normalizedLine.contains("exam")
+                || normalizedLine.contains("test")
+                || normalizedLine.contains("assignment")
+                || normalizedLine.contains("project")
+                || normalizedLine.contains("paper")
+                || normalizedLine.contains("lab")
+                || normalizedLine.contains("discussion")
+                || normalizedLine.contains("hw")
+                || normalizedLine.contains("homework")
+                || normalizedLine.contains("due");
+    }
+
+    private String inferAssignmentType(String title) {
+        String normalized = title.toLowerCase(Locale.ROOT);
+        if (normalized.contains("quiz")) {
+            return "quiz";
+        }
+        if (normalized.contains("exam") || normalized.contains("midterm") || normalized.contains("final")) {
+            return "exam";
+        }
+        if (normalized.contains("project")) {
+            return "project";
+        }
+        if (normalized.contains("lab")) {
+            return "lab";
+        }
+        return "assignment";
+    }
+
+    private String cleanParsedTitle(String line, String date, String courseCode) {
+        String title = line;
+        if (date != null && !date.isBlank()) {
+            title = title.replace(date, " ");
+        }
+        title = title.replaceAll("\\b\\d{1,2}[/-]\\d{1,2}(?:[/-]\\d{2,4})?\\b", " ");
+        title = title.replaceAll("\\b\\d{4}-\\d{2}-\\d{2}\\b", " ");
+        title = title.replaceAll("(?i)\\bdue\\b", " ");
+        title = title.replaceAll("[\\|:;\\-]{2,}", " ");
+        title = title.replaceAll("\\s+", " ").trim();
+        if (title.isBlank()) {
+            return courseCode + " Assignment";
+        }
+        if (title.length() > 120) {
+            return title.substring(0, 120).trim();
+        }
+        return title;
+    }
+
+    private String extractDateFromLine(String line, int defaultYear) {
+        Matcher iso = ISO_DATE_PATTERN.matcher(line);
+        if (iso.find()) {
+            return iso.group(0);
+        }
+        Matcher mdy = MDY_DATE_PATTERN.matcher(line);
+        if (!mdy.find()) {
+            return null;
+        }
+        int month = Integer.parseInt(mdy.group(1));
+        int day = Integer.parseInt(mdy.group(2));
+        String yearGroup = mdy.group(3);
+        int year = defaultYear;
+        if (yearGroup != null && !yearGroup.isBlank()) {
+            int parsedYear = Integer.parseInt(yearGroup);
+            year = parsedYear < 100 ? 2000 + parsedYear : parsedYear;
+        }
+        try {
+            LocalDate parsed = LocalDate.of(year, month, day);
+            return parsed.format(DATE_FORMATTER);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private int extractYear(String semester) {
+        String normalized = normalizedSemester(semester);
+        String[] parts = normalized.split(" ");
+        for (String part : parts) {
+            if (part.matches("\\d{4}")) {
+                return Integer.parseInt(part);
+            }
+        }
+        return LocalDate.now().getYear();
+    }
+
     private List<String> fetchLiveCourseCodes() {
         if (!cachedCourseCodes.isEmpty() && Instant.now().isBefore(optionsCachedAt.plus(OPTIONS_CACHE_TTL))) {
             return cachedCourseCodes;
@@ -395,7 +781,7 @@ public class IntegrationService {
             String semester,
             String professor) {
         String key = offeringKey(courseCode, semester, professor);
-        return assignmentStore.computeIfAbsent(key, k -> defaultAssignments(courseCode));
+        return assignmentStore.computeIfAbsent(key, k -> defaultAssignments(courseCode, semester));
     }
 
     private List<Map<String, Object>> initializeCalendarEvents(
@@ -479,16 +865,41 @@ public class IntegrationService {
                 break;
             }
         }
+        // MGA academic calendar defaults:
+        // Spring full session starts Jan 12, 2026; summer full session starts May 27, 2026;
+        // fall starts Aug 12, 2026. Short sessions are handled when explicitly named.
         if (normalized.contains("spring")) {
+            if (normalized.contains("short session ii")) {
+                return LocalDate.of(year, 3, 9);
+            }
             return LocalDate.of(year, 1, 12);
         }
         if (normalized.contains("summer")) {
-            return LocalDate.of(year, 5, 15);
+            if (normalized.contains("short session i")) {
+                return LocalDate.of(year, 5, 20);
+            }
+            if (normalized.contains("short session ii")) {
+                return LocalDate.of(year, 6, 24);
+            }
+            return LocalDate.of(year, 5, 27);
         }
         if (normalized.contains("winter")) {
             return LocalDate.of(year, 1, 5);
         }
-        return LocalDate.of(year, 8, 18);
+        return LocalDate.of(year, 8, 12);
+    }
+
+    private int[] semesterOffsets(String semester) {
+        String normalized = normalizedSemester(semester).toLowerCase(Locale.ROOT);
+        if (normalized.contains("summer")) {
+            // Compressed summer timeline
+            return new int[] {7, 17, 31, 45, 60};
+        }
+        if (normalized.contains("spring") || normalized.contains("winter")) {
+            return new int[] {14, 28, 49, 77, 105};
+        }
+        // Fall/default timeline
+        return new int[] {14, 28, 49, 84, 112};
     }
 
     private List<Map<String, Object>> filterOfferings(
@@ -514,6 +925,7 @@ public class IntegrationService {
             item.put("professor", professor);
             item.put("section", offering.getOrDefault("section", "A01"));
             item.put("source", offering.getOrDefault("source", "syllabus-catalog"));
+            item.put("syllabusUrl", buildSyllabusUrl(normalizedCourseCode, semester, professor));
             filtered.add(item);
         }
         filtered.sort(Comparator.comparing(x -> String.valueOf(x.get("semester"))));
@@ -577,16 +989,62 @@ public class IntegrationService {
         item.put("professor", professor);
         item.put("section", section);
         item.put("source", source);
+        item.put("syllabusUrl", buildSyllabusUrl(courseCode, semester, professor));
         return item;
     }
 
-    private List<Map<String, Object>> defaultAssignments(String courseCode) {
+    private String buildSyllabusUrl(String courseCode, String semester, String professor) {
+        StringBuilder query = new StringBuilder();
+        if (courseCode != null && !courseCode.isBlank()) {
+            query.append(courseCode.trim());
+        }
+        if (semester != null && !semester.isBlank()) {
+            if (query.length() > 0) {
+                query.append(' ');
+            }
+            query.append(semester.trim());
+        }
+        if (professor != null && !professor.isBlank() && !professor.equalsIgnoreCase("Staff")) {
+            if (query.length() > 0) {
+                query.append(' ');
+            }
+            query.append(professor.trim());
+        }
+        if (query.length() == 0) {
+            return SYLLABUS_LIBRARY_URL;
+        }
+        return SYLLABUS_LIBRARY_URL + "?search=" + URLEncoder.encode(query.toString(), StandardCharsets.UTF_8);
+    }
+
+    private List<Map<String, Object>> defaultAssignments(String courseCode, String semester) {
+        LocalDate start = semesterStartDate(semester);
+        int[] offsets = semesterOffsets(semester);
         List<Map<String, Object>> assignments = new ArrayList<>();
-        assignments.add(buildAssignment("Tentative Assignment 1", "2026-09-20", "assignment", true));
-        assignments.add(buildAssignment("Tentative Quiz 1", "2026-10-04", "quiz", true));
-        assignments.add(buildAssignment("Tentative Midterm", "2026-10-25", "exam", true));
-        assignments.add(buildAssignment(courseCode + " Project Draft", "2026-11-15", "project", true));
-        assignments.add(buildAssignment(courseCode + " Final Exam", "2026-12-08", "exam", true));
+        assignments.add(buildAssignment(
+                "Tentative Assignment 1",
+                start.plusDays(offsets[0]).format(DATE_FORMATTER),
+                "assignment",
+                true));
+        assignments.add(buildAssignment(
+                "Tentative Quiz 1",
+                start.plusDays(offsets[1]).format(DATE_FORMATTER),
+                "quiz",
+                true));
+        assignments.add(buildAssignment(
+                "Tentative Midterm",
+                start.plusDays(offsets[2]).format(DATE_FORMATTER),
+                "exam",
+                true));
+        assignments.add(buildAssignment(
+                courseCode + " Project Draft",
+                start.plusDays(offsets[3]).format(DATE_FORMATTER),
+                "project",
+                true));
+        assignments.add(buildAssignment(
+                courseCode + " Final Exam",
+                start.plusDays(offsets[4]).format(DATE_FORMATTER),
+                "exam",
+                true));
         return assignments;
     }
 

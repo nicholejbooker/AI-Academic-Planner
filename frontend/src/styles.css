@@ -35,6 +35,18 @@ input {
   padding: 10px;
 }
 
+textarea {
+  width: 100%;
+  margin-top: 8px;
+  margin-bottom: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px;
+  min-height: 140px;
+  resize: vertical;
+  font-family: inherit;
+}
+
 select {
   width: 100%;
   margin-top: 8px;
@@ -107,6 +119,12 @@ button:disabled {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.manualSyllabusBox {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid #e2e8f0;
 }
 
 .success {
@@ -283,6 +301,9 @@ button:disabled {
   padding: 8px;
   overflow: hidden;
   cursor: grab;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.15;
 }
 
 .eventCard:active {
@@ -315,4 +336,12 @@ button:disabled {
 .agendaRow {
   padding: 8px 10px;
   border-bottom: 1px solid #f1f5f9;
+}
+
+.selectedEventPanel {
+  border: 1px solid #c7d2fe;
+  background: #eef2ff;
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 10px;
 }
